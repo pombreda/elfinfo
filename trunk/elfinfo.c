@@ -41,6 +41,67 @@ int is_ELF(Elf32_Ehdr *hdr)
 		return -1;
 
 }
+int read_ELF_program_header(int sect_num,Elf32_Phdr *prg_hdr,FILE *fp)
+{
+	int numsect;
+	Elf32_Ehdr elfhdr;
+	off_t prg_hdr_off;
+	fseek(fp,(off_t)0,SEEK_SET);
+	read_ELF_file_header(fp,&elfhdr);
+	numsect=elfhdr.e_shnum;
+	if((numsect<sect_num)||(sect_num<0))
+		return -1;
+	prg_hdr_off=elfhdr.e_phoff;
+	prg_hdr_off+=elfhdr.e_phentsize*sect_num;
+	fseek(fp,(off_t)prg_hdr_off,SEEK_SET);
+	fread(prg_hdr,sizeof(Elf32_Phdr),1,fp);
+	return 1;
+}
+void process_prg_hdr(Elf32_Phdr *prg_hdr,char *buff)
+{
+	
+	printf("Type ");
+	switch(prg_hdr->p_type)
+	{
+		case 0:	printf("NULL==UNUSED ");
+			break;
+		case 1:	printf("LOAD==LOADABLE ");
+			break;
+		case 2: printf("DYNAMIC==DYNAMIC LINK INFO");
+			break;
+		case 3: printf("INTRP==Program interpreter");
+			break;
+		case 4: printf("AUX==Auxiliary info");
+			break;
+		case 5: printf("SHLIB== reserved");
+			break;
+		case 6: printf("PHDR == entry for header table itself");
+			break;
+		case 7: printf("TLS==thread local storage");
+			break;
+		case 8: printf("NUM== number of defined types");
+			break;
+		case 0x60000000: printf("LOOS== start of os specific");
+			break;
+		case 0x6474e550: printf("GCC_EH_FRAME header");
+			break;
+		case 0x6474e551: printf("STACK executability");
+			break;
+		case 0x6474e552: printf("READ_ONLY after RELOC");
+			break;
+		case 0x6ffffffa: printf("LOSUNW / SUNWBSS sun specific");
+			break;
+		case 0x6ffffffb: printf("SUNWSTACK sunspecific stack");
+			break;
+		case 0x6fffffff: printf("OS SPECIFIC ends");
+			break;
+		case 0x70000000: printf("START of Processor Specific");
+			break;
+		case 0x7fffffff: printf("END processor specific");
+			break;
+	}
+	printf("\n");
+}
 int read_ELF_section_header(int sect_num,Elf32_Shdr *sect_hdr,FILE *fp)
 {
 	int numsect;
@@ -57,6 +118,46 @@ int read_ELF_section_header(int sect_num,Elf32_Shdr *sect_hdr,FILE *fp)
 	fseek(fp,(off_t)sect_hdr_off,SEEK_SET);
 	fread(sect_hdr,sizeof(Elf32_Shdr),1,fp);
 	return 1;	
+}
+void display_proghdr(FILE *fp)
+{
+	Elf32_Ehdr ehdr;
+	Elf32_Phdr phdr;
+	int num_hdrs,i;
+	char *buff=NULL;
+	fseek(fp,(off_t)0,SEEK_SET);
+	read_ELF_file_header(fp, &ehdr);
+	if(is_ELF(&ehdr)==-1)
+	{
+		printf("Not an ELF file\n");
+		exit(0);
+	}
+	num_hdrs=ehdr.e_phnum;
+	buff=(char*)malloc(phdr.p_filesz);
+	if (!buff)
+	{
+		printf("Malloc failed to allocate buffer prog header\n");
+		exit(0);
+	}
+	fseek(fp,(off_t)phdr.p_offset,SEEK_SET);
+	fread(buff,phdr.p_filesz,1,fp);
+	printf("There are [%d] prog headers\n",num_hdrs);
+	printf("Program header details\n=======================\n");
+	for(i=0;i<num_hdrs;i++)
+	{
+		if(read_ELF_program_header(i,&phdr,fp)==-1)
+		{
+			printf("Wrong header to read\n");
+		}
+		else
+		{
+			printf("[p-header %3d] \t",i);
+			process_prg_hdr(&phdr,buff);
+			
+		}
+	}
+	if(buff)
+		free(buff);
 }
 void process_sect_hdr(Elf32_Shdr *sect_hdr,char *sect_name_buff)
 {
@@ -81,7 +182,7 @@ void process_sect_hdr(Elf32_Shdr *sect_hdr,char *sect_name_buff)
 			break;
 		case 5: printf("HASH           \t");
 			break;
-		case 6: printf("SYMTAB         \t");
+		case 6: printf("DYNAMIC         \t");
 			break;
 		case 7: printf("NOTE           \t");
 			break;
@@ -327,20 +428,28 @@ void dump_symbols(FILE *fp)
 				process_symtab(i,fp);
 				
 			}
-			else
-				continue;			
+					
 		}
 	}
 }
 
+void process_dynamic(FILE *fp)
+{
+	if(!fp)
+	{
+		printf("invalid file handle or file not opened\n");
+		return;
+	}
+	
+}
 int main(int argc, char *argv[])
 {
 	FILE *elffile;
 	char *temp;
-	int itr,do_section=0,do_symbols=0;
+	int itr,do_section=0,do_symbols=0,do_proghdr=0;
 	if(argc<3)
 	{	
-		printf("%s <elffile> <symbol> and/or <section>\n",argv[0]);
+		printf("%s <elffile> <symbol> and/or <section> and/or <proghdr>\n",argv[0]);
 		exit(0);
 	}
 	if (argc>2)
@@ -353,6 +462,8 @@ int main(int argc, char *argv[])
 				do_section=1;
 			if(strcmp(temp,"symbol")==0)
 				do_symbols=1;
+			if(strcmp(temp,"proghdr")==0)
+				do_proghdr=1;
 			free(temp);
 		}
 	}
@@ -372,6 +483,11 @@ int main(int argc, char *argv[])
 		dump_symbols(elffile);
 		printf("-=|finished symbols|=-\n");
 	}
+	if(do_proghdr==1)
+	{
+		display_proghdr(elffile);
+		printf("-=|finished proghdr|=-\n");
+	}
 	fclose(elffile);
+	
 }
-
